@@ -154,6 +154,138 @@ function spawnOnRoad() {
   }
 }
 
+// ---------- living entities: cars & pedestrians ----------
+const cars = [], peds = [];
+
+const isRoad = (x, z) => inBounds(x, z) && tile[idx(x, z)] === T_ROAD;
+const isWalk = (x, z) => inBounds(x, z) && (tile[idx(x, z)] === T_WALK || tile[idx(x, z)] === T_PLAZA);
+
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function spawnLife() {
+  cars.length = 0; peds.length = 0;
+  for (let t = 0; t < 26; t++) {
+    const c = randomCell(isRoad); if (!c) break;
+    const d = DIRS[Math.random() * 4 | 0];
+    cars.push({
+      x: (c.x + .5) * CELL, z: (c.z + .5) * CELL,
+      dx: d[0], dz: d[1], sp: 5 + Math.random() * 4,
+      hue: Math.random(),
+    });
+  }
+  for (let t = 0; t < 34; t++) {
+    const c = randomCell(isWalk); if (!c) break;
+    const d = DIRS[Math.random() * 4 | 0];
+    peds.push({ x: (c.x + .5) * CELL, z: (c.z + .5) * CELL, dx: d[0], dz: d[1], sp: 1.4 + Math.random() * 1.2, ph: Math.random() * 6.28 });
+  }
+}
+function randomCell(pred) {
+  for (let t = 0; t < 500; t++) {
+    const x = 1 + (Math.random() * (GW - 2) | 0), z = 1 + (Math.random() * (GH - 2) | 0);
+    if (pred(x, z)) return { x, z };
+  }
+  return null;
+}
+
+function updateLife(dt) {
+  // cars: drive down roads, turn at dead ends, brake behind each other
+  for (const c of cars) {
+    let nx = c.x + c.dx * c.sp * dt, nz = c.z + c.dz * c.sp * dt;
+    const gx = Math.floor(nx / CELL), gz = Math.floor(nz / CELL);
+    if (!isRoad(gx, gz)) {                       // dead end: pick a new road dir
+      const opts = DIRS.filter(d => isRoad(Math.floor((c.x + d[0] * 2) / CELL), Math.floor((c.z + d[1] * 2) / CELL)));
+      if (opts.length) { const d = opts[Math.random() * opts.length | 0]; c.dx = d[0]; c.dz = d[1]; }
+      else { c.dx = -c.dx; c.dz = -c.dz; }
+      continue;
+    }
+    // simple car-following: slow if another car close ahead
+    for (const o of cars) if (o !== c) {
+      const ax = (o.x - c.x) * c.dx + (o.z - c.z) * c.dz;
+      const side = Math.abs((o.x - c.x) * c.dz - (o.z - c.z) * c.dx);
+      if (ax > 0 && ax < 3.2 && side < 1.2) { nx = c.x; nz = c.z; break; }
+    }
+    c.x = nx; c.z = nz;
+  }
+  // pedestrians: wander sidewalks, bounce off walls
+  for (const p of peds) {
+    p.ph += dt * 6;
+    const nx = p.x + p.dx * p.sp * dt, nz = p.z + p.dz * p.sp * dt;
+    if (!isWalk(Math.floor(nx / CELL), Math.floor(nz / CELL)) || Math.random() < 0.004) {
+      const opts = DIRS.filter(d => isWalk(Math.floor((p.x + d[0] * 1.2) / CELL), Math.floor((p.z + d[1] * 1.2) / CELL)));
+      if (opts.length) { const d = opts[Math.random() * opts.length | 0]; p.dx = d[0]; p.dz = d[1]; }
+      else { p.dx = -p.dx; p.dz = -p.dz; }
+    } else { p.x = nx; p.z = nz; }
+  }
+}
+
+// sprite patterns: rows of [char, r, g, b]; char null = transparent
+const T = [null];
+function carSprite(c) {
+  const body = ["=", 190, 80 + c.hue * 120, 90 + (1 - c.hue) * 120];
+  const roof = ["^", 120, 70 + c.hue * 90, 80 + (1 - c.hue) * 90];
+  const head = ["*", 255, 235, 150];
+  const tail  = [".", 230, 60, 60];
+  const facingX = Math.abs(c.dx) > 0.5;
+  if (facingX) {
+    const front = c.dx > 0 ? head : tail, back = c.dx > 0 ? tail : head;
+    return [
+      [T, roof, T],
+      [front, body, back],
+    ];
+  }
+  const front = c.dz > 0 ? head : tail, back = c.dz > 0 ? tail : head;
+  return [
+    [T, roof, T],
+    [T, body, T],
+    [front, T, back],
+  ];
+}
+function pedSprite(p) {
+  const bob = Math.sin(p.ph) > 0;
+  const skin = ["o", 235, 190, 150];
+  const cloth = [bob ? "\\" : "|", 130, 140, 210];
+  const legs  = [bob ? "/" : " ", 170, 170, 190];
+  return [[skin], [cloth], [legs]];
+}
+
+// splat sprites into the cell grid with a depth test against the raycast
+function splatLife(depthBuf, colorBuf, charBuf, sizeBuf, F, R, U, aspect, tanH) {
+  const draw = (list, ey, spriteFn) => {
+    for (const e of list) {
+      const rx = e.x - player.x, ry = ey, rz = e.z - player.z;
+      const dF = rx * F[0] + ry * F[1] + rz * F[2];
+      if (dF < 0.6 || dF > MAXD) continue;
+      const dR = rx * R[0] + ry * R[1] + rz * R[2];
+      const dU = rx * U[0] + ry * U[1] + rz * U[2];
+      const cx = (0.5 + 0.5 * (dR / dF) / (aspect * tanH)) * cols;
+      const cy = (0.5 - 0.5 * (dU / dF) / tanH) * rows;
+      const s = clamp(9 / (1.5 + dF), 0.55, 2.4);          // sprite scale
+      const spr = spriteFn(e);
+      const h = spr.length;
+      for (let i = 0; i < h; i++) {
+        const rowCells = spr[i];
+        const w = rowCells.length;
+        const py = Math.round(cy + (h / 2 - i - 0.5) * s);
+        for (let j = 0; j < w; j++) {
+          const cell = rowCells[j];
+          if (cell[0] === null) continue;
+          const px = Math.round(cx + (j - (w - 1) / 2) * s * 0.62);
+          if (px < 0 || px >= cols || py < 0 || py >= rows) continue;
+          const k = px + py * cols;
+          if (dF >= depthBuf[k]) continue;
+          const f = Math.exp(-dF * 0.030);
+          depthBuf[k] = dF * 0.985;
+          charBuf[k] = cell[0];
+          sizeBuf[k] = clamp(s * 0.9, 0.6, 1.6);
+          colorBuf[k] = cs(cell[1] * f + FOG[0] * (1 - f), cell[2] * f + FOG[1] * (1 - f), cell[3] * f + FOG[2] * (1 - f));
+        }
+      }
+    }
+  };
+  draw(peds, 0.85, pedSprite);
+  draw(cars, 0.55, carSprite);
+}
+
 // ---------- ray casting over the heightfield ----------
 const MAXD = 95;
 const hit = { t: 0, type: -1, nx: 0, ny: 0, nz: 0, hx: 0, hy: 0, hz: 0, cell: -1, face: 0 };
@@ -346,7 +478,7 @@ function skyColor(dx, dy, dz, time) {
 const keys = {};
 addEventListener("keydown", e => {
   keys[e.code] = true;
-  if (e.code === "KeyR") { __seed = (Date.now() & 0xffff) | 1; generateCity(); spawnOnRoad(); }
+  if (e.code === "KeyR") { __seed = (Date.now() & 0xffff) | 1; generateCity(); spawnOnRoad(); spawnLife(); }
   if (e.code === "Equal" || e.code === "NumpadAdd") setDensity(-1);
   if (e.code === "Minus" || e.code === "NumpadSubtract") setDensity(1);
 });
@@ -405,7 +537,20 @@ function move(dt) {
 
 // ---------- render ----------
 const FOV = 1.22;
+let depthBuf, charBuf, colorBuf, sizeBuf;
+
+function ensureBuffers() {
+  const n = cols * rows;
+  if (!depthBuf || depthBuf.length !== n) {
+    depthBuf = new Float32Array(n); charBuf = new Array(n); colorBuf = new Array(n); sizeBuf = new Float32Array(n);
+  }
+}
+
 function render(time) {
+  ensureBuffers();
+  const n = cols * rows;
+  for (let i = 0; i < n; i++) { depthBuf[i] = 1e9; charBuf[i] = null; }
+
   // sky gradient background
   const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
   g.addColorStop(0, "#03040a"); g.addColorStop(0.62, "#0a1226"); g.addColorStop(1, "#060a16");
@@ -419,9 +564,9 @@ function render(time) {
   const aspect = canvas.width / canvas.height;
   const tanH = Math.tan(FOV / 2);
 
+  // pass 1: raycast the world into the cell buffers
   for (let row = 0; row < rows; row++) {
     const ny = 1 - ((row + 0.5) / rows) * 2;
-    const yPix = (row + 0.5) * cellH;
     for (let col = 0; col < cols; col++) {
       const nx = ((col + 0.5) / cols) * 2 - 1;
       let dx = F[0] + R[0] * nx * aspect * tanH + U[0] * ny * tanH;
@@ -430,30 +575,45 @@ function render(time) {
       const il = 1 / Math.hypot(dx, dy, dz);
       dx *= il; dy *= il; dz *= il;
 
-      let ch, r, gg, b, sz;
+      let ch = null, r = 0, gg = 0, b = 0, sz = 1;
       if (castRay(player.x, player.eye, player.z, dx, dy, dz)) {
         const dist = hit.t;
         [ch, r, gg, b, sz] = surface(hit, dist, time);
-        if (ch !== " ") {
+        if (ch !== " " && ch !== null) {
           const f = Math.exp(-dist * 0.030);
           r = r * f + FOG[0] * (1 - f);
           gg = gg * f + FOG[1] * (1 - f);
           b = b * f + FOG[2] * (1 - f);
           sz = sz * clamp(3.4 / (1.4 + dist), 0.62, 1.55);
+          const k = col + row * cols;
+          depthBuf[k] = dist; charBuf[k] = ch; colorBuf[k] = cs(r, gg, b);
+          sizeBuf[k] = sz;
         }
       } else {
         const s = skyColor(dx, dy, dz, time);
-        if (!s) continue;
-        [ch, r, gg, b, sz] = s;
+        if (s) {
+          const k = col + row * cols;
+          charBuf[k] = s[0]; colorBuf[k] = cs(s[1], s[2], s[3]); sizeBuf[k] = s[4];
+        }
       }
-      if (ch === " " || r + gg + b < 10) continue;
+    }
+  }
 
-      ctx.fillStyle = cs(r, gg, b);
-      if (sz > 1.02 || sz < 0.98) {
-        ctx.font = `bold ${Math.round(fontPx * sz)}px Consolas, Menlo, monospace`;
-      } else {
-        ctx.font = _fontBase;
-      }
+  // pass 2: depth-tested sprites (cars, pedestrians)
+  splatLife(depthBuf, colorBuf, charBuf, sizeBuf, F, R, U, aspect, tanH);
+
+  // pass 3: paint
+  for (let row = 0; row < rows; row++) {
+    const yPix = (row + 0.5) * cellH;
+    for (let col = 0; col < cols; col++) {
+      const k = col + row * cols;
+      const ch = charBuf[k];
+      if (ch === null || ch === " ") continue;
+      ctx.fillStyle = colorBuf[k];
+      const sz = sizeBuf[k];
+      ctx.font = (sz > 1.02 || sz < 0.98)
+        ? `bold ${Math.round(fontPx * sz)}px Consolas, Menlo, monospace`
+        : _fontBase;
       ctx.fillText(ch, (col + 0.5) * cellW, yPix);
     }
   }
@@ -466,6 +626,7 @@ const fpsEl = document.getElementById("fps");
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   move(dt);
+  updateLife(dt);
   render(now);
   fpsAcc += dt; fpsN++;
   if (now - fpsT > 500) {
@@ -478,12 +639,13 @@ function frame(now) {
 // ---------- boot ----------
 generateCity();
 spawnOnRoad();
+spawnLife();
 resize();
 _fontBase = ctx.font;
 requestAnimationFrame(frame);
 
 // expose for debugging / tests
-window.__asciiCity = { player, generateCity, castRay, hit, tile, height, lamps, idx, inBounds, tileAt: (x,z)=>tile[idx(x,z)], CELL, GW, GH };
+window.__asciiCity = { player, generateCity, castRay, hit, tile, height, lamps, cars, peds, idx, inBounds, CELL, GW, GH };
 </script>
 </body>
 </html>
