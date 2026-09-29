@@ -1,651 +1,97 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ASCII CITY — a walkable city made of characters</title>
-<style>
-  html, body { margin:0; padding:0; height:100%; background:#04060d; overflow:hidden; }
-  #screen { display:block; width:100vw; height:100vh; cursor:crosshair; }
-  #hud {
-    position:fixed; top:14px; left:16px; color:#7fd4ff; pointer-events:none;
-    font:12px/1.6 Consolas, Menlo, monospace; text-shadow:0 0 8px rgba(60,160,255,.5);
-    opacity:.85; user-select:none;
-  }
-  #hud b { color:#e8f6ff; letter-spacing:3px; }
-  #hud .dim { color:#4a6a85; }
-</style>
+<title>ASCII CITY — Local Build</title>
+<link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-<canvas id="screen"></canvas>
-<div id="hud">
-  <b>ASCII&nbsp;CITY</b><br>
-  <span class="dim">click to walk &nbsp;·&nbsp; WASD / arrows move &nbsp;·&nbsp; shift run &nbsp;·&nbsp; R new city &nbsp;·&nbsp; +/- density</span><br>
-  <span id="fps"></span>
+<body class="prelude">
+<div id="app">
+  <main id="viewport">
+    <div id="screen">
+      <canvas id="cv"></canvas>
+      <div id="prelude-text"></div>
+      <div id="relay-transfer"><span></span></div>
+      <div id="toast"></div>
+      <div id="prompt"></div>
+    </div>
+  </main>
+  <aside id="interface">
+    <pre id="ui-nav"></pre>
+    <pre id="ui-map-title"></pre>
+    <pre id="ui-map"></pre>
+    <pre id="ui-map-legend" class="legend"></pre>
+    <section id="context-panel">
+      <pre class="h">03::LOCAL_CONTEXT
+<span class="dim">--------------------------------------------</span></pre>
+      <div id="ui-context-label"></div>
+      <strong id="ui-context-title"></strong>
+      <span id="ui-context-copy"></span>
+      <div id="ui-context-choices"></div>
+    </section>
+    <pre id="ui-music"></pre>
+    <details id="diagnostics"><summary>05::DIAGNOSTICS [F]</summary><pre id="ui-diag"></pre></details>
+  </aside>
 </div>
-<script>
-"use strict";
-/* ============================================================
-   ASCII CITY
-   A grid-based 3D city rendered entirely with colored ASCII
-   characters on a canvas. No WebGL, no libraries: every frame
-   casts one ray per character cell across a voxel heightfield,
-   solves the first hit (wall / roof / ground), and paints the
-   result as a letter, number or symbol. Nearby geometry gets
-   larger, brighter clusters of characters; distance fades into
-   the dark.
-   ============================================================ */
 
-// ---------- tiny helpers ----------
-const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
-function hash2(x, y) {           // deterministic 0..1 from two ints
-  let h = (x * 374761393 + y * 668265263) | 0;
-  h = (h ^ (h >> 13)) * 1274126177 | 0;
-  return ((h ^ (h >> 16)) >>> 0) / 4294967295;
-}
-let __seed = 1;
-function rnd() {                 // seeded RNG (mulberry32)
-  __seed |= 0; __seed = (__seed + 0x6D2B79F5) | 0;
-  let t = Math.imul(__seed ^ (__seed >>> 15), 1 | __seed);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-}
+<div id="overlay">
+  <div class="box">
+    <div class="logo">
+<pre>
+    _    ____   ____ ___ ___    ____ ___ _______   __
+   / \  / ___| / ___|_ _|_ _|  / ___|_ _|_   _\ \ / /
+  / _ \ \___ \| |    | | | |  | |    | |  | |  \ V /
+ / ___ \ ___) | |___ | | | |  | |___ | |  | |   | |
+/_/   \_\____/ \____|___|___|  \____|___| |_|   |_|
+</pre>
+    </div>
+    <div class="sub">LOCAL BUILD // WALKABLE 3D CITY RENDERED IN ASCII</div>
+    <div class="go">[ CLICK TO CONNECT ]</div>
+    <div class="small">Mouse look (click to lock) · WASD move · E interact · H help</div>
+    <div class="small" id="skip-hint" style="display:none">You have been here before — press SPACE to skip the opening.</div>
+  </div>
+</div>
 
-// ---------- world constants ----------
-const GW = 76, GH = 76;          // grid cells per side
-const CELL = 4;                  // world units per cell
-const WORLD_W = GW * CELL;
-const T_ROAD = 0, T_WALK = 1, T_BUILD = 2, T_GRASS = 3, T_PLAZA = 4;
+<div id="help">
+  <div class="box">
+    <div class="hh">ASCII CITY // CONTROLS &amp; SYSTEMS <button id="help-close">[X]</button></div>
+    <div class="cols">
+      <div>
+        <b>MOVEMENT</b>
+        <p>WASD / ↑↓ — walk &nbsp; SHIFT — run<br>MOUSE — look (click to lock, or drag)<br>← → — turn &nbsp; PGUP/PGDN — look up/down</p>
+        <b>INTERACT [E]</b>
+        <p>Answer the phone · enter any building · call the lift · leave by the door · use a telephone relay · hail a cab at a rank · board a sky taxi</p>
+        <b>TRAVEL</b>
+        <p>SHIFT+Y — locate nearest ground taxi rank (t)<br>Y — locate nearest sky taxi (T)<br>Y (in a cab) — ask the driver to pull over<br>Y (in a sky taxi) — emergency set-down<br>METRO — walk into a station (M), climb the stairs, cross the bridge and wait on the island platform. Walk on when the doors open, walk off at another stop.<br>RELAYS — discover booths (R); the directory lets you transmit to any relay you've found.</p>
+      </div>
+      <div>
+        <b>VIEW</b>
+        <p>M — map zoom: LOCAL → DISTRICT → SECTOR → CITY<br>G — toggle coloured glyph backing (classic sparse ASCII)<br>V — change character resolution<br>C — ASCII CITY // LIVE camera feeds (1–6, ← →)</p>
+        <b>MODES</b>
+        <p>T — auto tour (A* to the nearest landmark)<br>P — empty city (no people, no traffic)</p>
+        <b>MUSIC</b>
+        <p>SHIFT+N — music on/off &nbsp; [ ] — volume</p>
+        <b>MENUS</b>
+        <p>1–9, 0 — choose &nbsp; ESC / BACKSPACE — back / close<br>SPACE — skip the opening</p>
+        <b>THE CITY</b>
+        <p>8.2 km across · 16 sectors · 256 districts · 4,096 blocks · named streets · 8 landmark buildings + the Signal Keeper · 3 monorail lines</p>
+      </div>
+    </div>
+  </div>
+</div>
 
-// cell buffers
-const tile    = new Uint8Array(GW * GH);
-const height  = new Float32Array(GW * GH);   // building height (0 = flat)
-const bhash   = new Float32Array(GW * GH);   // per-building random 0..1
-const lightmap= new Float32Array(GW * GH);   // streetlight glow on ground
-
-const idx = (x, z) => x + z * GW;
-const inBounds = (x, z) => x >= 0 && z >= 0 && x < GW && z < GH;
-
-// ---------- city generation ----------
-function generateCity() {
-  tile.fill(T_GRASS); height.fill(0); bhash.fill(0);
-
-  // --- road grid: 2-cell-wide roads every 10 cells ---
-  const roadAt = i => (i % 10 === 0 || i % 10 === 1);
-  for (let z = 0; z < GH; z++)
-    for (let x = 0; x < GW; x++)
-      if (roadAt(x) || roadAt(z)) tile[idx(x, z)] = T_ROAD;
-
-  // --- sidewalks ring every block edge ---
-  const nearRoad = (x, z) => {
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++)
-      if (inBounds(x+dx, z+dz) && tile[idx(x+dx, z+dz)] === T_ROAD) return true;
-    return false;
-  };
-  for (let z = 0; z < GH; z++)
-    for (let x = 0; x < GW; x++)
-      if (tile[idx(x,z)] === T_GRASS && nearRoad(x, z)) tile[idx(x,z)] = T_WALK;
-
-  // --- buildings: random rectangles inside each block ---
-  for (let bz = 0; bz < GH; bz += 10)
-  for (let bx = 0; bx < GW; bx += 10) {
-    if (rnd() < 0.14) continue;                       // park / empty lot
-    const x0 = bx + 3, z0 = bz + 3, x1 = bx + 9, z1 = bz + 9;
-    let tries = 26;
-    while (tries-- > 0) {
-      const w = 2 + (rnd() * 4 | 0), d = 2 + (rnd() * 4 | 0);
-      const rx = x0 + (rnd() * Math.max(1, (x1 - x0 - w))) | 0;
-      const rz = z0 + (rnd() * Math.max(1, (z1 - z0 - d))) | 0;
-      // footprint free?
-      let ok = true;
-      for (let z = rz; z < rz + d && ok; z++)
-        for (let x = rx; x < rx + w && ok; x++)
-          if (!(inBounds(x, z) && tile[idx(x,z)] !== T_BUILD)) ok = false;
-      if (!ok) continue;
-      const h = 2 + Math.pow(rnd(), 1.7) * 17;        // taller towers, rarer
-      const bh = rnd();
-      for (let z = rz; z < rz + d; z++)
-        for (let x = rx; x < rx + w; x++) {
-          tile[idx(x,z)] = T_BUILD; height[idx(x,z)] = h; bhash[idx(x,z)] = bh;
-        }
-    }
-  }
-
-  // --- scatter trees on grass ---
-  for (let z = 0; z < GH; z++)
-    for (let x = 0; x < GW; x++)
-      if (tile[idx(x,z)] === T_GRASS && rnd() < 0.10) height[idx(x,z)] = 1.2 + rnd() * 1.4;
-
-  // --- streetlights: along roads every 6 cells, glow baked to lightmap ---
-  lamps.length = 0;
-  for (let z = 2; z < GH; z += 6)
-    for (let x = 0; x < GW; x++)
-      if (tile[idx(x,z)] === T_WALK && (x % 10) === 2) addLamp(x, z);
-  for (let x = 2; x < GW; x += 6)
-    for (let z = 0; z < GH; z++)
-      if (tile[idx(x,z)] === T_WALK && (z % 10) === 2) addLamp(x, z);
-
-  // bake ground glow
-  lightmap.fill(0.12);
-  for (const L of lamps) {
-    const cx = L.x / CELL, cz = L.z / CELL, R = 7;
-    for (let z = Math.max(0, cz - R); z < Math.min(GH, cz + R); z++)
-      for (let x = Math.max(0, cx - R); x < Math.min(GW, cx + R); x++) {
-        const d = Math.hypot(x - cx, z - cz);
-        lightmap[idx(x,z)] += 1.15 / (1 + d * d * 0.22);
-      }
-  }
-}
-
-const lamps = [];   // {x, z} world positions of lamp heads
-function addLamp(gx, gz) {
-  lamps.push({ x: (gx + 0.5) * CELL, z: (gz + 0.5) * CELL });
-}
-
-// ---------- camera / player ----------
-const player = { x: WORLD_W * 0.5, z: WORLD_W * 0.5 + 2, yaw: 0.6, pitch: -0.06, eye: 1.7 };
-
-function spawnOnRoad() {
-  for (let t = 0; t < 400; t++) {
-    const x = (1 + (rnd() * (GW - 2)) | 0), z = (1 + (rnd() * (GH - 2)) | 0);
-    if (tile[idx(x,z)] === T_ROAD && height[idx(x,z)] === 0) {
-      player.x = (x + .5) * CELL; player.z = (z + .5) * CELL; return;
-    }
-  }
-}
-
-// ---------- living entities: cars & pedestrians ----------
-const cars = [], peds = [];
-
-const isRoad = (x, z) => inBounds(x, z) && tile[idx(x, z)] === T_ROAD;
-const isWalk = (x, z) => inBounds(x, z) && (tile[idx(x, z)] === T_WALK || tile[idx(x, z)] === T_PLAZA);
-
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-
-function spawnLife() {
-  cars.length = 0; peds.length = 0;
-  for (let t = 0; t < 26; t++) {
-    const c = randomCell(isRoad); if (!c) break;
-    const d = DIRS[Math.random() * 4 | 0];
-    cars.push({
-      x: (c.x + .5) * CELL, z: (c.z + .5) * CELL,
-      dx: d[0], dz: d[1], sp: 5 + Math.random() * 4,
-      hue: Math.random(),
-    });
-  }
-  for (let t = 0; t < 34; t++) {
-    const c = randomCell(isWalk); if (!c) break;
-    const d = DIRS[Math.random() * 4 | 0];
-    peds.push({ x: (c.x + .5) * CELL, z: (c.z + .5) * CELL, dx: d[0], dz: d[1], sp: 1.4 + Math.random() * 1.2, ph: Math.random() * 6.28 });
-  }
-}
-function randomCell(pred) {
-  for (let t = 0; t < 500; t++) {
-    const x = 1 + (Math.random() * (GW - 2) | 0), z = 1 + (Math.random() * (GH - 2) | 0);
-    if (pred(x, z)) return { x, z };
-  }
-  return null;
-}
-
-function updateLife(dt) {
-  // cars: drive down roads, turn at dead ends, brake behind each other
-  for (const c of cars) {
-    let nx = c.x + c.dx * c.sp * dt, nz = c.z + c.dz * c.sp * dt;
-    const gx = Math.floor(nx / CELL), gz = Math.floor(nz / CELL);
-    if (!isRoad(gx, gz)) {                       // dead end: pick a new road dir
-      const opts = DIRS.filter(d => isRoad(Math.floor((c.x + d[0] * 2) / CELL), Math.floor((c.z + d[1] * 2) / CELL)));
-      if (opts.length) { const d = opts[Math.random() * opts.length | 0]; c.dx = d[0]; c.dz = d[1]; }
-      else { c.dx = -c.dx; c.dz = -c.dz; }
-      continue;
-    }
-    // simple car-following: slow if another car close ahead
-    for (const o of cars) if (o !== c) {
-      const ax = (o.x - c.x) * c.dx + (o.z - c.z) * c.dz;
-      const side = Math.abs((o.x - c.x) * c.dz - (o.z - c.z) * c.dx);
-      if (ax > 0 && ax < 3.2 && side < 1.2) { nx = c.x; nz = c.z; break; }
-    }
-    c.x = nx; c.z = nz;
-  }
-  // pedestrians: wander sidewalks, bounce off walls
-  for (const p of peds) {
-    p.ph += dt * 6;
-    const nx = p.x + p.dx * p.sp * dt, nz = p.z + p.dz * p.sp * dt;
-    if (!isWalk(Math.floor(nx / CELL), Math.floor(nz / CELL)) || Math.random() < 0.004) {
-      const opts = DIRS.filter(d => isWalk(Math.floor((p.x + d[0] * 1.2) / CELL), Math.floor((p.z + d[1] * 1.2) / CELL)));
-      if (opts.length) { const d = opts[Math.random() * opts.length | 0]; p.dx = d[0]; p.dz = d[1]; }
-      else { p.dx = -p.dx; p.dz = -p.dz; }
-    } else { p.x = nx; p.z = nz; }
-  }
-}
-
-// sprite patterns: rows of [char, r, g, b]; char null = transparent
-const T = [null];
-function carSprite(c) {
-  const body = ["=", 190, 80 + c.hue * 120, 90 + (1 - c.hue) * 120];
-  const roof = ["^", 120, 70 + c.hue * 90, 80 + (1 - c.hue) * 90];
-  const head = ["*", 255, 235, 150];
-  const tail  = [".", 230, 60, 60];
-  const facingX = Math.abs(c.dx) > 0.5;
-  if (facingX) {
-    const front = c.dx > 0 ? head : tail, back = c.dx > 0 ? tail : head;
-    return [
-      [T, roof, T],
-      [front, body, back],
-    ];
-  }
-  const front = c.dz > 0 ? head : tail, back = c.dz > 0 ? tail : head;
-  return [
-    [T, roof, T],
-    [T, body, T],
-    [front, T, back],
-  ];
-}
-function pedSprite(p) {
-  const bob = Math.sin(p.ph) > 0;
-  const skin = ["o", 235, 190, 150];
-  const cloth = [bob ? "\\" : "|", 130, 140, 210];
-  const legs  = [bob ? "/" : " ", 170, 170, 190];
-  return [[skin], [cloth], [legs]];
-}
-
-// splat sprites into the cell grid with a depth test against the raycast
-function splatLife(depthBuf, colorBuf, charBuf, sizeBuf, F, R, U, aspect, tanH) {
-  const draw = (list, ey, spriteFn) => {
-    for (const e of list) {
-      const rx = e.x - player.x, ry = ey, rz = e.z - player.z;
-      const dF = rx * F[0] + ry * F[1] + rz * F[2];
-      if (dF < 0.6 || dF > MAXD) continue;
-      const dR = rx * R[0] + ry * R[1] + rz * R[2];
-      const dU = rx * U[0] + ry * U[1] + rz * U[2];
-      const cx = (0.5 + 0.5 * (dR / dF) / (aspect * tanH)) * cols;
-      const cy = (0.5 - 0.5 * (dU / dF) / tanH) * rows;
-      const s = clamp(9 / (1.5 + dF), 0.55, 2.4);          // sprite scale
-      const spr = spriteFn(e);
-      const h = spr.length;
-      for (let i = 0; i < h; i++) {
-        const rowCells = spr[i];
-        const w = rowCells.length;
-        const py = Math.round(cy + (h / 2 - i - 0.5) * s);
-        for (let j = 0; j < w; j++) {
-          const cell = rowCells[j];
-          if (cell[0] === null) continue;
-          const px = Math.round(cx + (j - (w - 1) / 2) * s * 0.62);
-          if (px < 0 || px >= cols || py < 0 || py >= rows) continue;
-          const k = px + py * cols;
-          if (dF >= depthBuf[k]) continue;
-          const f = Math.exp(-dF * 0.030);
-          depthBuf[k] = dF * 0.985;
-          charBuf[k] = cell[0];
-          sizeBuf[k] = clamp(s * 0.9, 0.6, 1.6);
-          colorBuf[k] = cs(cell[1] * f + FOG[0] * (1 - f), cell[2] * f + FOG[1] * (1 - f), cell[3] * f + FOG[2] * (1 - f));
-        }
-      }
-    }
-  };
-  draw(peds, 0.85, pedSprite);
-  draw(cars, 0.55, carSprite);
-}
-
-// ---------- ray casting over the heightfield ----------
-const MAXD = 95;
-const hit = { t: 0, type: -1, nx: 0, ny: 0, nz: 0, hx: 0, hy: 0, hz: 0, cell: -1, face: 0 };
-
-function castRay(ox, oy, oz, dx, dy, dz) {
-  let bestT = MAXD, bestType = -1, face = 0, cell = -1, hx = 0, hy = 0, hz = 0;
-
-  // ground plane (y = 0)
-  if (dy < -1e-7) {
-    const tg = oy / -dy;
-    if (tg < bestT) { bestT = tg; bestType = T_PLAZA; face = 2; }
-  }
-
-  // 2D DDA across the XZ grid
-  let mx = Math.floor(ox / CELL), mz = Math.floor(oz / CELL);
-  const stepX = dx > 0 ? 1 : -1, stepZ = dz > 0 ? 1 : -1;
-  const ddx = Math.abs(1 / (dx || 1e-9)), ddz = Math.abs(1 / (dz || 1e-9));
-  let sdx = dx > 0 ? (mx + 1 - ox / CELL) * ddx : (ox / CELL - mx) * ddx;
-  let sdz = dz > 0 ? (mz + 1 - oz / CELL) * ddz : (oz / CELL - mz) * ddz;
-  let t0 = 0, side = 0;
-
-  for (let guard = 0; guard < 400; guard++) {
-    let t1;
-    if (sdx < sdz) { t1 = sdx; mx += stepX; sdx += ddx; side = 0; }
-    else           { t1 = sdz; mz += stepZ; sdz += ddz; side = 1; }
-    if (t1 > bestT) break;
-    if (!inBounds(mx, mz)) break;
-    const c = idx(mx, mz), h = height[c];
-    if (h > 0 && tile[c] !== T_GRASS) {                 // building column
-      const y0 = oy + dy * t0;
-      if (y0 <= h + 1e-4) {                             // entered below roof -> wall
-        bestT = t0; bestType = T_BUILD; face = side; cell = c;
-        break;
-      }
-      if (dy < 0) {                                     // ray descends onto roof
-        const tr = (oy - h) / dy;
-        if (tr >= t0 && tr <= t1) {
-          bestT = tr; bestType = T_BUILD; face = 2; cell = c;
-          break;
-        }
-      }
-    } else if (h > 0) {                                 // tree blob (soft box)
-      const y0 = oy + dy * t0, y1 = oy + dy * t1;
-      const lo = Math.min(y0, y1), hi = Math.max(y0, y1);
-      if (lo < h && hi > 0.25) {
-        const tt = lo > 0.25 ? (lo - 0.25) / (hi - 0.25 || 1) * (t1 - t0) + t0 : t0;
-        if (tt < bestT) {
-          bestT = tt; bestType = 5; face = side; cell = c;
-          break;
-        }
-      }
-    }
-    t0 = t1;
-  }
-
-  if (bestType === -1) return false;
-  hit.t = bestT; hit.type = bestType; hit.cell = cell; hit.face = face;
-  hit.hx = ox + dx * bestT; hit.hy = oy + dy * bestT; hit.hz = oz + dz * bestT;
-  hit.nx = face === 0 ? (dx > 0 ? -1 : 1) : 0;
-  hit.nz = face === 1 ? (dz > 0 ? -1 : 1) : 0;
-  hit.ny = face === 2 ? 1 : 0;
-  return true;
-}
-
-// ---------- character ramps ----------
-const RAMP = " .·,:-_~!=+*oa0#%&@";   // sparse -> dense
-const rampAt = l => RAMP[clamp(Math.round(l * (RAMP.length - 1)), 0, RAMP.length - 1)];
-
-// color string cache (quantized)
-const _cs = new Map();
-function cs(r, g, b) {
-  r = clamp(r, 0, 255) & 0xFC; g = clamp(g, 0, 255) & 0xFC; b = clamp(b, 0, 255) & 0xFC;
-  const k = (r << 16) | (g << 8) | b;
-  let s = _cs.get(k);
-  if (!s) { s = `rgb(${r},${g},${b})`; _cs.set(k, s); }
-  return s;
-}
-
-// ---------- canvas / grid ----------
-const canvas = document.getElementById("screen");
-const ctx = canvas.getContext("2d", { alpha: false });
-let cols = 0, rows = 0, cellW = 11, cellH = 17, fontPx = 15;
-
-function resize() {
-  canvas.width = innerWidth; canvas.height = innerHeight;
-  cols = Math.ceil(canvas.width / cellW);
-  rows = Math.ceil(canvas.height / cellH);
-  _fontBase = `bold ${fontPx}px Consolas, Menlo, monospace`;
-  ctx.font = _fontBase;
-  ctx.textAlign = "center"; ctx.textBaseline = "middle";
-}
-let _fontBase = "bold 15px Consolas, Menlo, monospace";
-addEventListener("resize", resize);
-
-// ---------- shading ----------
-const FOG = [6, 10, 22];
-const MOON = [0.35, 0.82, -0.45];      // dim cool key light (normalized-ish)
-
-function shade(nx, ny, nz, base) {     // base [r,g,b] -> shaded [r,g,b]
-  const d = Math.max(0, nx * MOON[0] + ny * MOON[1] + nz * MOON[2]);
-  const amb = 0.30;
-  const k = amb + 0.85 * d;
-  return [base[0] * k, base[1] * k, base[2] * k];
-}
-
-// pick char + color for a hit; returns [char, r, g, b, sizeMul]
-function surface(hit, dist, time) {
-  const t = hit.type;
-
-  if (t === T_PLAZA) {                                   // ground
-    const gx = Math.floor(hit.hx / CELL), gz = Math.floor(hit.hz / CELL);
-    if (!inBounds(gx, gz)) return [" ", 0, 0, 0, 0];
-    const c = idx(gx, gz), tt = tile[c];
-    const glow = lightmap[c];
-    if (tt === T_ROAD) {
-      // lane dashes down the middle of each road band
-      const rx = hit.hx / CELL, rz = hit.hz / CELL;
-      const onRoadX = (Math.floor(rx) % 10) < 2, onRoadZ = (Math.floor(rz) % 10) < 2;
-      const cxm = rx - Math.floor(rx / 10) * 10, czm = rz - Math.floor(rz / 10) * 10;
-      const dash = (onRoadX && Math.abs(cxm - 1) < 0.12 && Math.floor(rz * 2) % 2 === 0) ||
-                   (onRoadZ && Math.abs(czm - 1) < 0.12 && Math.floor(rx * 2) % 2 === 0);
-      if (dash) return ["-", 200, 170, 60, 1];
-      const l = 0.10 + glow * 0.30;
-      return [rampAt(l * 0.5 + 0.06), 90 + glow * 130, 105 + glow * 130, 125 + glow * 150, 1];
-    }
-    if (tt === T_WALK) {
-      const l = 0.16 + glow * 0.35;
-      return [((gx + gz) & 1) ? "." : "·", 120 + glow * 150, 130 + glow * 150, 140 + glow * 150, 1];
-    }
-    if (tt === T_PLAZA) return ["·", 120, 120, 130, 1];
-    const l = 0.12 + glow * 0.18;                        // grass
-    return [((gx * 7 + gz * 13) % 5 === 0) ? "`" : ",", 60 + glow * 60, 130 + glow * 90, 70 + glow * 60, 1];
-  }
-
-  if (t === 5) {                                         // tree
-    const v = hit.hy;
-    const l = 0.35 + 0.4 * (v / 2);
-    return [v > 1.4 ? "*" : (v > 0.8 ? "o" : "'"), 50, 150 + v * 40, 80, 1];
-  }
-
-  if (t === T_BUILD) {                                   // building
-    const bh = bhash[hit.cell];
-    // window grid on wall faces
-    if (hit.face !== 2) {
-      const u = hit.face === 0 ? hit.hz : hit.hx;
-      const v = hit.hy;
-      const wu = u / 1.15, wv = v / 1.35;
-      const fu = wu - Math.floor(wu), fv = wv - Math.floor(wv);
-      const inWin = fu > 0.22 && fu < 0.80 && fv > 0.24 && fv < 0.82;
-      if (inWin) {
-        const flick = Math.floor(time * 0.05 + hash2(Math.floor(wu), Math.floor(wv)) * 9) % 97;
-        const lit = hash2(Math.floor(wu) + 31, Math.floor(wv) * 7 + Math.floor(bh * 90)) < 0.42 && flick !== 0;
-        if (lit) {
-          const warm = hash2(Math.floor(wu), Math.floor(wv) + 5);
-          return [warm < 0.7 ? ":" : "0", 255, 205 - warm * 60, 110 - warm * 60, 1.15];
-        }
-        return ["·", 40, 55, 85, 1];                     // dark pane
-      }
-      const side = shade(hit.nx, 0, hit.nz, [70 + bh * 60, 80 + bh * 50, 105 + bh * 55]);
-      const l = 0.30 + 0.3 * hash2(Math.floor(u * 3), Math.floor(v * 3));
-      return [rampAt(l), side[0], side[1], side[2], 1];
-    }
-    const l = 0.16 + 0.1 * bh;                           // roof
-    return [rampAt(l), 45, 52, 70, 1];
-  }
-  return [" ", 0, 0, 0, 0];
-}
-
-// ---------- sky ----------
-function skyColor(dx, dy, dz, time) {
-  const p = clamp(dy * 0.5 + 0.5, 0, 1);
-  let r = 10 + 14 * (1 - p), g = 16 + 18 * (1 - p), b = 38 + 26 * (1 - p);
-  // stars
-  const az = Math.atan2(dx, dz), el = Math.asin(clamp(dy, -1, 1));
-  const sx = Math.floor(az * 160), sy = Math.floor(el * 160);
-  const hs = hash2(sx, sy);
-  if (hs > 0.9955 && dy > 0.02) {
-    const tw = 0.6 + 0.4 * Math.sin(time * 0.002 + hs * 90);
-    return [".", 220 * tw, 230 * tw, 255 * tw, 1];
-  }
-  // moon
-  const ml = Math.hypot(MOON[0], MOON[1], MOON[2]);
-  const dot = (dx * MOON[0] + dy * MOON[1] + dz * MOON[2]) / ml;
-  if (dot > 0.985) return ["O", 255, 248, 220, 2.2];
-  if (dot > 0.965) return ["°", 160, 160, 140, 1.4];
-  return null;
-}
-
-// ---------- input ----------
-const keys = {};
-addEventListener("keydown", e => {
-  keys[e.code] = true;
-  if (e.code === "KeyR") { __seed = (Date.now() & 0xffff) | 1; generateCity(); spawnOnRoad(); spawnLife(); }
-  if (e.code === "Equal" || e.code === "NumpadAdd") setDensity(-1);
-  if (e.code === "Minus" || e.code === "NumpadSubtract") setDensity(1);
-});
-addEventListener("keyup", e => keys[e.code] = false);
-
-canvas.addEventListener("click", () => canvas.requestPointerLock && canvas.requestPointerLock());
-addEventListener("mousemove", e => {
-  if (document.pointerLockElement !== canvas) return;
-  player.yaw   -= e.movementX * 0.0023;
-  player.pitch  = clamp(player.pitch - e.movementY * 0.0023, -1.25, 1.25);
-});
-
-// touch: drag to look
-let lastT = null;
-canvas.addEventListener("touchstart", e => lastT = e.touches[0]);
-canvas.addEventListener("touchmove", e => {
-  if (!lastT) return;
-  const t = e.touches[0];
-  player.yaw += (t.clientX - lastT.clientX) * 0.004;
-  player.pitch = clamp(player.pitch - (t.clientY - lastT.clientY) * 0.004, -1.25, 1.25);
-  lastT = t;
-});
-
-function setDensity(dir) {
-  cellW = clamp(cellW + dir * 2, 7, 22);
-  cellH = Math.round(cellW * 1.55);
-  fontPx = Math.round(cellH * 0.92);
-  resize();
-}
-
-// ---------- movement with collision ----------
-function blocked(x, z) {
-  const r = 0.55;
-  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-    const gx = Math.floor((x + dx * r) / CELL), gz = Math.floor((z + dz * r) / CELL);
-    if (!inBounds(gx, gz)) return true;
-    if (tile[idx(gx, gz)] === T_BUILD && height[idx(gx, gz)] > 0) return true;
-    if (tile[idx(gx, gz)] === T_GRASS && height[idx(gx, gz)] > 0) return true;
-  }
-  return false;
-}
-
-function move(dt) {
-  const sp = (keys.ShiftLeft || keys.ShiftRight ? 15 : 7) * dt;
-  let fx = 0, fz = 0;
-  if (keys.KeyW || keys.ArrowUp)    { fx += Math.sin(player.yaw);   fz += Math.cos(player.yaw); }
-  if (keys.KeyS || keys.ArrowDown)  { fx -= Math.sin(player.yaw);   fz -= Math.cos(player.yaw); }
-  if (keys.KeyA || keys.ArrowLeft)  { fx += Math.cos(player.yaw);   fz -= Math.sin(player.yaw); }
-  if (keys.KeyD || keys.ArrowRight) { fx -= Math.cos(player.yaw);   fz += Math.sin(player.yaw); }
-  const m = Math.hypot(fx, fz);
-  if (m < 1e-6) return;
-  fx = fx / m * sp; fz = fz / m * sp;
-  if (!blocked(player.x + fx, player.z)) player.x += fx;
-  if (!blocked(player.x, player.z + fz)) player.z += fz;
-}
-
-// ---------- render ----------
-const FOV = 1.22;
-let depthBuf, charBuf, colorBuf, sizeBuf;
-
-function ensureBuffers() {
-  const n = cols * rows;
-  if (!depthBuf || depthBuf.length !== n) {
-    depthBuf = new Float32Array(n); charBuf = new Array(n); colorBuf = new Array(n); sizeBuf = new Float32Array(n);
-  }
-}
-
-function render(time) {
-  ensureBuffers();
-  const n = cols * rows;
-  for (let i = 0; i < n; i++) { depthBuf[i] = 1e9; charBuf[i] = null; }
-
-  // sky gradient background
-  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  g.addColorStop(0, "#03040a"); g.addColorStop(0.62, "#0a1226"); g.addColorStop(1, "#060a16");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
-  const F = [Math.sin(player.yaw) * cp, sp, Math.cos(player.yaw) * cp];
-  const R = [-Math.cos(player.yaw), 0, Math.sin(player.yaw)];  // screen right = f x up
-  const U = [R[1]*F[2]-R[2]*F[1], R[2]*F[0]-R[0]*F[2], R[0]*F[1]-R[1]*F[0]]; // R x F (up)
-  const aspect = canvas.width / canvas.height;
-  const tanH = Math.tan(FOV / 2);
-
-  // pass 1: raycast the world into the cell buffers
-  for (let row = 0; row < rows; row++) {
-    const ny = 1 - ((row + 0.5) / rows) * 2;
-    for (let col = 0; col < cols; col++) {
-      const nx = ((col + 0.5) / cols) * 2 - 1;
-      let dx = F[0] + R[0] * nx * aspect * tanH + U[0] * ny * tanH;
-      let dy = F[1] + R[1] * nx * aspect * tanH + U[1] * ny * tanH;
-      let dz = F[2] + R[2] * nx * aspect * tanH + U[2] * ny * tanH;
-      const il = 1 / Math.hypot(dx, dy, dz);
-      dx *= il; dy *= il; dz *= il;
-
-      let ch = null, r = 0, gg = 0, b = 0, sz = 1;
-      if (castRay(player.x, player.eye, player.z, dx, dy, dz)) {
-        const dist = hit.t;
-        [ch, r, gg, b, sz] = surface(hit, dist, time);
-        if (ch !== " " && ch !== null) {
-          const f = Math.exp(-dist * 0.030);
-          r = r * f + FOG[0] * (1 - f);
-          gg = gg * f + FOG[1] * (1 - f);
-          b = b * f + FOG[2] * (1 - f);
-          sz = sz * clamp(3.4 / (1.4 + dist), 0.62, 1.55);
-          const k = col + row * cols;
-          depthBuf[k] = dist; charBuf[k] = ch; colorBuf[k] = cs(r, gg, b);
-          sizeBuf[k] = sz;
-        }
-      } else {
-        const s = skyColor(dx, dy, dz, time);
-        if (s) {
-          const k = col + row * cols;
-          charBuf[k] = s[0]; colorBuf[k] = cs(s[1], s[2], s[3]); sizeBuf[k] = s[4];
-        }
-      }
-    }
-  }
-
-  // pass 2: depth-tested sprites (cars, pedestrians)
-  splatLife(depthBuf, colorBuf, charBuf, sizeBuf, F, R, U, aspect, tanH);
-
-  // pass 3: paint
-  for (let row = 0; row < rows; row++) {
-    const yPix = (row + 0.5) * cellH;
-    for (let col = 0; col < cols; col++) {
-      const k = col + row * cols;
-      const ch = charBuf[k];
-      if (ch === null || ch === " ") continue;
-      ctx.fillStyle = colorBuf[k];
-      const sz = sizeBuf[k];
-      ctx.font = (sz > 1.02 || sz < 0.98)
-        ? `bold ${Math.round(fontPx * sz)}px Consolas, Menlo, monospace`
-        : _fontBase;
-      ctx.fillText(ch, (col + 0.5) * cellW, yPix);
-    }
-  }
-}
-
-// ---------- main loop ----------
-let last = performance.now(), fpsAcc = 0, fpsN = 0, fpsT = 0;
-const fpsEl = document.getElementById("fps");
-
-function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  move(dt);
-  updateLife(dt);
-  render(now);
-  fpsAcc += dt; fpsN++;
-  if (now - fpsT > 500) {
-    fpsEl.textContent = `${Math.round(fpsN / fpsAcc)} fps · ${cols}×${rows} chars`;
-    fpsAcc = 0; fpsN = 0; fpsT = now;
-  }
-  requestAnimationFrame(frame);
-}
-
-// ---------- boot ----------
-generateCity();
-spawnOnRoad();
-spawnLife();
-resize();
-_fontBase = ctx.font;
-requestAnimationFrame(frame);
-
-// expose for debugging / tests
-window.__asciiCity = { player, generateCity, castRay, hit, tile, height, lamps, cars, peds, idx, inBounds, CELL, GW, GH };
-</script>
+<script src="js/core.js"></script>
+<script src="js/world.js"></script>
+<script src="js/transit.js"></script>
+<script src="js/render.js"></script>
+<script src="js/gl.js"></script>
+<script src="js/models.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/interior.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>
