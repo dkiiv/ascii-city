@@ -151,23 +151,33 @@ function nearPhoneBooth() {
   for (const q of L.props) if (q.t === 'phone' && Math.hypot(q.x - p.x, q.y - p.y) < 2.2) return q;
   return null;
 }
-function relayDirectory(fromRelay) {
+/* up to 10 rows fit the number keys; longer lists show 9 per page plus [0] MORE >> */
+function pageOptions(items, page, toOption, reopen) {
+  if (items.length <= 10) return items.map(toOption);
+  const pages = Math.ceil(items.length / 9), p = page % pages;
+  const opts = items.slice(p * 9, p * 9 + 9).map(toOption);
+  opts.push({ text: 'MORE >> // PAGE ' + (p + 1) + '/' + pages, fn: () => reopen((p + 1) % pages) });
+  return opts;
+}
+function relayDirectory(fromRelay, page) {
   const known = W.relays.filter(r => G.relays.has(r.idx));
   const sectors = [...new Set(known.map(r => r.d.sector))];
   const from = fromRelay;
+  const districtMenu = (sec, dpage) => {
+    const list = known.filter(r => r.d.sector === sec);
+    G.menu = {
+      label: 'RELAY // ' + sec, title: 'DIRECTORY // SELECT DISTRICT', copy: 'Transmission through the public network.',
+      back: () => relayDirectory(from, page),
+      options: pageOptions(list, dpage || 0,
+        r => ({ text: AC.pad(r.name, 18) + ' // ' + AC.fmtDist(Math.hypot(r.x - from.x, r.y - from.y)), disabled: r === from, fn: () => startRelayTravel(from, r) }),
+        p => districtMenu(sec, p))
+    };
+  };
   G.menu = {
     label: 'RELAY // ' + from.name, title: 'DIRECTORY // SELECT SECTOR', copy: known.length + ' RELAYS REGISTERED // ' + sectors.length + ' SECTORS',
-    options: sectors.slice(0, 9).map(sec => ({
-      text: AC.pad(sec, 10) + ' // ' + known.filter(r => r.d.sector === sec).length + ' RELAY(S)',
-      fn: () => {
-        const list = known.filter(r => r.d.sector === sec);
-        G.menu = {
-          label: 'RELAY // ' + sec, title: 'DIRECTORY // SELECT DISTRICT', copy: 'Transmission through the public network.',
-          back: () => relayDirectory(from),
-          options: list.slice(0, 9).map(r => ({ text: AC.pad(r.name, 18) + ' // ' + AC.fmtDist(Math.hypot(r.x - from.x, r.y - from.y)), disabled: r === from, fn: () => startRelayTravel(from, r) }))
-        };
-      }
-    }))
+    options: pageOptions(sectors, page || 0,
+      sec => ({ text: AC.pad(sec, 10) + ' // ' + known.filter(r => r.d.sector === sec).length + ' RELAY(S)', fn: () => districtMenu(sec, 0) }),
+      p => relayDirectory(from, p))
   };
 }
 function startRelayTravel(from, to) {

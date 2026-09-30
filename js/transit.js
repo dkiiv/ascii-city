@@ -32,11 +32,18 @@ for (const L of T.LINES) {
   L.stations = [];
   const u0 = L.alongAxis === 'y' ? L.p0.y : L.p0.x, dir = L.alongAxis === 'y' ? L.f.y : L.f.x;
   const used = new Set();
+  // candidate sites between car-road crossings, taken in order of distance along the line
+  // (lines running in -x/-y visit the 128 m segments in reverse, so sort by s before spacing them)
+  const cands = [];
   for (let k = 0; k < 64; k++) {
     const g0 = 128 * k + 12;
     const wLo = g0 + 22, wHi = g0 + 22 + 74;
-    let s0 = dir > 0 ? wLo - u0 : u0 - wHi;
+    const s0 = dir > 0 ? wLo - u0 : u0 - wHi;
     if (s0 < 30 || s0 + 80 > L.len) continue;
+    cands.push({ k, s0 });
+  }
+  cands.sort((a, b) => a.s0 - b.s0);
+  for (const { k, s0 } of cands) {
     if (L.stations.length && s0 - L.stations[L.stations.length - 1].s0 < 440) continue;
     const st = { line: L, s0, idx: L.stations.length, gidx: T.stations.length, es: 1 };
     const mid = T.pointOn(L, s0 + 22, 0);

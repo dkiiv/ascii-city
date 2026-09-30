@@ -1,4 +1,4 @@
-/* ASCII CITY — procedural world: 8192m city, 16 sectors, 256 districts, 4096 blocks */
+/* ASCII CITY — procedural world: 8192m city, 16 sectors, 256 districts, 65,536 blocks of 32 m */
 (function () {
 'use strict';
 const W = AC.W = {};
